@@ -24,8 +24,8 @@ Run from the repo root (`C:\Users\mikae\mikraw`). The dev interpreter lives in
 pip install -e ".[dev]"                       # editable install + dev deps
 ```
 
-- Tests are inline-free pure-logic `tests/test_*.py` (look engine, autoexp
-  heuristic, CLI/discovery). They do **not** need rawpy or a RAW file.
+- Tests are pure-logic `tests/test_*.py` (look engine incl. local contrast,
+  autoexp heuristic, CLI/discovery). They do **not** need rawpy or a RAW file.
 - A real end-to-end RAW conversion can only be verified by the user running the
   CLI on actual `.RW2` files — Claude cannot decode RAW here. Make principled
   changes and have the user test.
@@ -73,6 +73,11 @@ Per file, `pipeline.convert_one`:
 4. **`develop.apply_look`** (numpy, on the 16-bit array):
    - `_filmic_curve`: shadow lift (`SHADOW_LIFT`), midtone S-curve
      (`CONTRAST_STRENGTH`), sine highlight shoulder above `HIGHLIGHT_ROLLOFF`.
+   - `_local_contrast`: multi-scale luminance "clarity" (`LOCAL_CONTRAST`). Detail
+     = mid-frequency luminance variation at a fine + coarse scale (separable box
+     blur, `_blur`), tanh soft-clipped (`LOCAL_CONTRAST_CLIP`) to avoid edge
+     halos, added equally to all channels (preserves chroma). This is the
+     micro-contrast/depth that Darktable's tone-equalizer gives.
    - `_vibrance`: luma-preserving saturation boost (`SATURATION_BASE` +
      `SATURATION_VIBRANCE`, tapered by current chroma) — **with skin-tone
      protection**: pixels near the skin hue (`_skin_weight`, gaussian around
@@ -97,6 +102,8 @@ Per file, `pipeline.convert_one`:
 All knobs are named module-level constants:
 - Tone/contrast/highlights: `develop.SHADOW_LIFT`, `CONTRAST_STRENGTH`,
   `HIGHLIGHT_ROLLOFF`.
+- Local contrast: `develop.LOCAL_CONTRAST`, `LOCAL_CONTRAST_RADIUS`,
+  `LOCAL_CONTRAST_CLIP` (CLI `--clarity` scales the strength).
 - Saturation + skin: `develop.SATURATION_BASE`, `SATURATION_VIBRANCE`,
   `SKIN_PROTECT`, `SKIN_HUE_CENTER`, `SKIN_HUE_WIDTH`.
 - Exposure: `pipeline.BASE_EXPOSURE`, `_BLEND_DARK`, `_BLEND_LIGHT`.
@@ -109,9 +116,10 @@ keep the README "look" section accurate.
 The look was tuned against the user's Darktable edits of Lumix RW2 files. Their
 recipe (from the `.xmp` sidecars) is: camera WB, **+0.7 EV default exposure**, a
 **sigmoid** tone map (contrast ~1.5), and a "compress shadows/highlights" tone
-equalizer. mikraw approximates this globally. The remaining gap vs Darktable is
-**local micro-contrast** (their tone-equalizer is zone/guided-filter based) —
-a candidate v0.2 feature, not a quick constant.
+equalizer. mikraw approximates this globally; the tone-equalizer's local
+micro-contrast is approximated by `_local_contrast` (v0.2). It is a multi-scale
+unsharp, not a true edge-aware guided filter, so very high-contrast edges rely on
+the tanh soft-clip rather than a guide image to stay halo-free.
 
 ## Common pitfalls
 - **Edit requires prior Read** in a session.

@@ -50,6 +50,40 @@ def test_gray_stays_gray_under_saturation():
     assert out[0] == out[1] == out[2]
 
 
+def test_local_contrast_amount_zero_is_identity():
+    rgb = np.random.rand(16, 16, 3).astype(np.float32)
+    out = develop._local_contrast(rgb, 0.0)
+    assert np.array_equal(out, rgb)
+
+
+def test_local_contrast_leaves_flat_region_unchanged():
+    # A uniform luminance field has no mid-frequency detail -> no change.
+    rgb = np.full((16, 16, 3), 0.5, dtype=np.float32)
+    out = develop._local_contrast(rgb, develop.LOCAL_CONTRAST)
+    assert np.allclose(out, rgb, atol=1e-4)
+
+
+def test_local_contrast_increases_edge_contrast():
+    # Step edge in luminance: clarity should push the two sides further apart
+    # near the boundary (dark side darker, light side lighter).
+    rgb = np.zeros((32, 32, 3), dtype=np.float32)
+    rgb[:, :16] = 0.35
+    rgb[:, 16:] = 0.65
+    out = develop._local_contrast(rgb, develop.LOCAL_CONTRAST * 2.0)
+    dark_edge = out[16, 14, 0]   # just left of the boundary
+    light_edge = out[16, 17, 0]  # just right of the boundary
+    assert dark_edge < 0.35 + 1e-3
+    assert light_edge > 0.65 - 1e-3
+    assert out.min() >= 0.0 and out.max() <= 1.0
+
+
+def test_clarity_mult_changes_output():
+    arr = (np.random.rand(24, 24, 3) * 65535).astype(np.uint16)
+    base = develop.apply_look(arr, clarity_mult=0.0)
+    clar = develop.apply_look(arr, clarity_mult=1.0)
+    assert not np.array_equal(base, clar)
+
+
 def test_skin_hue_is_detected():
     skin = np.array([[[0.80, 0.55, 0.40]]], dtype=np.float32)   # warm orange, ~hue 0.06
     green = np.array([[[0.40, 0.70, 0.35]]], dtype=np.float32)  # foliage green

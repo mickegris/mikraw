@@ -82,16 +82,35 @@ def dry_run(files: list[str], opts: Options) -> None:
     print(f"\n{len(files)} file(s) would be converted.")
 
 
+def _progress(iterable, total: int, quiet: bool):
+    """Wrap an iterable in a Windows-terminal-safe tqdm bar (or pass it through)."""
+    if quiet:
+        return iterable
+    try:
+        from tqdm import tqdm
+    except Exception:  # pragma: no cover
+        return iterable
+    return tqdm(
+        iterable,
+        total=total,
+        unit="img",
+        # ASCII bar: Windows terminals render tqdm's Unicode partial-block glyphs
+        # (the sub-character fill used mid-progress) as garbage in many fonts /
+        # code pages -- so the bar "looks weird during, fine after". "#" is safe.
+        ascii=True,
+        dynamic_ncols=True,
+        smoothing=0.1,
+        bar_format="{desc} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} "
+        "[{elapsed}<{remaining}]",
+        desc="Converting",
+    )
+
+
 def run(files: list[str], opts: Options, jobs: int, quiet: bool = False) -> Summary:
     """Convert all files, optionally in parallel. Per-file failures are isolated."""
     summary = Summary()
     if not files:
         return summary
-
-    try:
-        from tqdm import tqdm
-    except Exception:  # pragma: no cover
-        tqdm = None
 
     jobs = max(1, jobs)
 
@@ -106,10 +125,7 @@ def run(files: list[str], opts: Options, jobs: int, quiet: bool = False) -> Summ
             log.error("failed: %s (%s)", res.source, res.message)
 
     if jobs == 1 or len(files) == 1:
-        it = files
-        if tqdm and not quiet:
-            it = tqdm(files, unit="img")
-        for f in it:
+        for f in _progress(files, len(files), quiet):
             record(convert_one(f, opts))
         return summary
 
@@ -119,9 +135,7 @@ def run(files: list[str], opts: Options, jobs: int, quiet: bool = False) -> Summ
     args = [(f, opts) for f in files]
     with mp.Pool(processes=jobs) as pool:
         results_iter = pool.imap_unordered(_worker, args)
-        if tqdm and not quiet:
-            results_iter = tqdm(results_iter, total=len(files), unit="img")
-        for res in results_iter:
+        for res in _progress(results_iter, len(files), quiet):
             record(res)
     return summary
 
