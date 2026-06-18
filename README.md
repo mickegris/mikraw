@@ -1,9 +1,10 @@
 # mikraw
 
-Bulk-convert camera **RAW** files to **JPEG** with a fixed, opinionated "develop"
-look. Built for fast batch conversion with good **Panasonic Lumix S-series
-(`.RW2`)** support, powered by [LibRaw](https://www.libraw.org/) via
-[rawpy](https://github.com/letmaik/rawpy).
+A generic command-line **RAW → JPEG** converter that applies a fixed, opinionated
+"develop" look, built for fast batch conversion. It works with any RAW format
+[LibRaw](https://www.libraw.org/) supports (via
+[rawpy](https://github.com/letmaik/rawpy)); it is developed and tuned using
+**Panasonic Lumix (`.RW2`)** files.
 
 ## The look (hardcoded)
 
@@ -19,9 +20,11 @@ look. Built for fast batch conversion with good **Panasonic Lumix S-series
   natural rather than going orange.
 - **Tone/contrast:** a filmic curve — gentle shadow lift, midtone S-curve, and a
   smooth highlight shoulder that rolls off to white instead of clipping.
+- **Local contrast ("clarity"):** a multi-scale luminance boost that adds
+  micro-contrast and depth (halo-suppressed), approximating a tone-equalizer.
 
-You can nudge the baked-in look per run with `--saturation` / `--contrast`
-multipliers (`1.0` = default look, `0.0` = neutral).
+You can nudge the baked-in look per run with `--saturation` / `--contrast` /
+`--clarity` multipliers (`1.0` = default look, `0.0` = neutral).
 
 ## Install
 
@@ -54,12 +57,12 @@ mikraw --dry-run -r .
 | --- | --- |
 | `-q, --quality N` | JPEG quality percent (default 90) |
 | `-o, --output DIR` | output directory (default: current dir) |
-| `--autoexp` / `-autoexp` | analyze + auto-adjust exposure |
+| `--autoexp` | analyze + auto-adjust exposure |
 | `-r, --recursive` | recurse into subdirectories |
 | `-j, --jobs N` | parallel workers (default: CPU count) |
 | `--overwrite` | overwrite existing JPEGs (default: skip) |
 | `--suffix TEXT` | text added before `.jpg` |
-| `--saturation F` / `--contrast F` | scale the baked-in look |
+| `--saturation F` / `--contrast F` / `--clarity F` | scale the baked-in look |
 | `--no-exif` | don't copy EXIF metadata |
 | `--dry-run` | list planned conversions and exit |
 

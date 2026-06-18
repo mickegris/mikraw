@@ -13,8 +13,6 @@ venv/
 .mypy_cache/
 .coverage
 
-# Output / fixtures
-out/
-out_*/
+# Fixtures
 tests/fixtures/*.RW2
 tests/fixtures/*.rw2

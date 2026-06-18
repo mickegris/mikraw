@@ -41,6 +41,7 @@ class Options:
     suffix: str = ""
     contrast: float = 1.0
     saturation: float = 1.0
+    clarity: float = 1.0
     copy_exif: bool = True
 
 
@@ -111,7 +112,7 @@ def convert_one(src: str, opts: Options) -> FileResult:
             else:
                 arr16 = _postprocess(raw, exp_shift, rawpy)
 
-        rgb8 = develop.apply_look(arr16, opts.contrast, opts.saturation)
+        rgb8 = develop.apply_look(arr16, opts.contrast, opts.saturation, opts.clarity)
 
         from PIL import Image
 

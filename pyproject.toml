@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mikraw"
-version = "0.1.0"
-description = "Bulk RAW-to-JPEG converter with a fixed vibrant look and good Panasonic Lumix S-series support"
+version = "0.2.0"
+description = "Generic batch RAW-to-JPEG converter with a fixed vibrant look, developed with Panasonic Lumix files"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

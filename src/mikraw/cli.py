@@ -25,7 +25,7 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="JPEG quality percent (default: 90)")
     p.add_argument("-o", "--output", default=".", metavar="DIR",
                    help="output directory (created if missing)")
-    p.add_argument("--autoexp", "-autoexp", action="store_true",
+    p.add_argument("--autoexp", action="store_true",
                    help="analyze the image and auto-adjust exposure")
     p.add_argument("-r", "--recursive", action="store_true",
                    help="recurse into subdirectories")
@@ -39,6 +39,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="multiplier over the baked-in saturation (0 = neutral)")
     p.add_argument("--contrast", type=float, default=1.0,
                    help="multiplier over the baked-in contrast (0 = neutral)")
+    p.add_argument("--clarity", type=float, default=1.0,
+                   help="multiplier over the baked-in local contrast (0 = neutral)")
     p.add_argument("--no-exif", action="store_true",
                    help="do not copy EXIF metadata into the JPEG")
     p.add_argument("--dry-run", action="store_true",
@@ -71,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         suffix=args.suffix,
         contrast=args.contrast,
         saturation=args.saturation,
+        clarity=args.clarity,
         copy_exif=not args.no_exif,
     )
 
