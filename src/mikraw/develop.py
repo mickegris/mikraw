@@ -31,6 +31,11 @@ CONTRAST_STRENGTH = 0.14    # midtone S-curve steepness (applied between toe and
 SATURATION_BASE = 0.14      # baseline chroma boost (all pixels)
 SATURATION_VIBRANCE = 0.26  # extra boost for low-chroma pixels (tapers to 0 at full chroma)
 
+# Skin-tone protection: pixels in the skin hue range get little saturation boost,
+# so faces stay natural instead of going orange. Leaves foliage/flowers untouched.
+SKIN_PROTECT = 0.80         # fraction of the boost removed at the skin-hue peak (0..1)
+SKIN_HUE_CENTER = 0.07      # skin hue in [0,1) (~25°, warm orange)
+SKIN_HUE_WIDTH = 0.05       # gaussian half-width of the protected hue band
 
 _LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 
@@ -64,11 +69,40 @@ def _filmic_curve(x: np.ndarray, contrast_mult: float) -> np.ndarray:
     return np.where(above, rolled, x)
 
 
+def _hue(rgb: np.ndarray) -> np.ndarray:
+    """Per-pixel hue in [0,1) (red=0, yellow≈0.167, green≈0.333). Gray → 0."""
+    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    mx = rgb.max(axis=-1)
+    mn = rgb.min(axis=-1)
+    delta = mx - mn
+    h = np.zeros_like(mx)
+    nz = delta > 1e-6
+    ir = nz & (mx == r)
+    ig = nz & (mx == g) & ~ir
+    ib = nz & (mx == b) & ~ir & ~ig
+    h[ir] = (((g[ir] - b[ir]) / delta[ir]) % 6.0)
+    h[ig] = ((b[ig] - r[ig]) / delta[ig]) + 2.0
+    h[ib] = ((r[ib] - g[ib]) / delta[ib]) + 4.0
+    return (h / 6.0) % 1.0
+
+
+def _skin_weight(rgb: np.ndarray) -> np.ndarray:
+    """0..1 weight, high for skin-hued pixels (gaussian around SKIN_HUE_CENTER)."""
+    hue = _hue(rgb)
+    d = (hue - SKIN_HUE_CENTER) / SKIN_HUE_WIDTH
+    return np.exp(-(d * d))[..., None]
+
+
 def _vibrance(rgb: np.ndarray, base: float, vibrance: float) -> np.ndarray:
-    """Luma-preserving saturation push that tapers for already-saturated pixels."""
+    """Luma-preserving saturation push that tapers for already-saturated pixels.
+
+    Skin-hued pixels receive a reduced boost (SKIN_PROTECT) so faces stay natural.
+    """
     luma = (rgb @ _LUMA)[..., None]
     chroma = rgb.max(axis=-1, keepdims=True) - rgb.min(axis=-1, keepdims=True)
-    factor = 1.0 + base + vibrance * (1.0 - chroma)
+    boost = base + vibrance * (1.0 - chroma)
+    boost = boost * (1.0 - SKIN_PROTECT * _skin_weight(rgb))
+    factor = 1.0 + boost
     return np.clip(luma + (rgb - luma) * factor, 0.0, 1.0)
 
 

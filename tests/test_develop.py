@@ -50,6 +50,29 @@ def test_gray_stays_gray_under_saturation():
     assert out[0] == out[1] == out[2]
 
 
+def test_skin_hue_is_detected():
+    skin = np.array([[[0.80, 0.55, 0.40]]], dtype=np.float32)   # warm orange, ~hue 0.06
+    green = np.array([[[0.40, 0.70, 0.35]]], dtype=np.float32)  # foliage green
+    assert develop._skin_weight(skin)[0, 0, 0] > 0.7
+    assert develop._skin_weight(green)[0, 0, 0] < 0.1
+
+
+def test_skin_gets_less_saturation_than_foliage():
+    skin = np.array([[[0.80, 0.55, 0.40]]], dtype=np.float32)
+    green = np.array([[[0.40, 0.70, 0.35]]], dtype=np.float32)
+
+    def chroma(a):
+        return float(a.max() - a.min())
+
+    skin_out = develop._vibrance(skin, develop.SATURATION_BASE, develop.SATURATION_VIBRANCE)
+    green_out = develop._vibrance(green, develop.SATURATION_BASE, develop.SATURATION_VIBRANCE)
+    skin_gain = chroma(skin_out) - chroma(skin)
+    green_gain = chroma(green_out) - chroma(green)
+    # Both gain some chroma, but skin is strongly protected.
+    assert green_gain > skin_gain
+    assert skin_gain < 0.4 * green_gain
+
+
 def test_contrast_mult_zero_disables_s_curve():
     # With contrast=0, midtone S-curve is off; only tone and lift remain.
     # A mid-grey value at contrast=0 vs contrast=1 should differ.

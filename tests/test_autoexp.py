@@ -31,14 +31,26 @@ def test_clamped_to_usable_range():
 
 
 def test_small_bright_cluster_does_not_block_brightening():
-    # Mixed-light scene: mostly dark subject + small blown patches (e.g. window, sunlit floor).
-    # The 70th-percentile reference sits below those patches, so brightening is not blocked.
+    # Mixed-light scene: mostly dark subject + tiny blown patches (e.g. window, sunlit floor).
+    # A 5% cluster stays below the 92nd-pctile highlight reference, so brightening is not capped.
     dark = np.full((100, 100), 0.15, dtype=np.float32)
     with_highlights = dark.copy()
     with_highlights[:5, :] = 0.97   # 5% bright specular patches
     shift_mixed = autoexp.exp_shift_for_luma(with_highlights)
     shift_dark = autoexp.exp_shift_for_luma(dark)
-    # Mixed-light scene should still brighten significantly (not blocked by the hot patches).
     assert shift_mixed > 1.5
-    # The bright patches pull the 40th pctile up slightly -> slightly less brightening.
     assert shift_mixed <= shift_dark
+
+
+def test_highlight_cap_protects_bright_subject():
+    # Dark clothing dominates the centre (drags the 40th pctile down), but a sizeable
+    # bright face region exists. The highlight cap must limit brightening so the face
+    # is not blown -- far less than a uniformly-dark frame at the same 40th pctile.
+    jacket = np.full((100, 100), 0.12, dtype=np.float32)
+    with_face = jacket.copy()
+    with_face[:15, :] = 0.55          # 15% bright skin region -> lands on 92nd pctile
+    shift_face = autoexp.exp_shift_for_luma(with_face)
+    shift_uniform = autoexp.exp_shift_for_luma(jacket)
+    # The cap holds the bright region near the ceiling instead of over-brightening.
+    assert shift_face < shift_uniform
+    assert shift_face < 2.0
