@@ -132,4 +132,4 @@ the tanh soft-clip rather than a guide image to stay halo-free.
   user to visually confirm conversions.
 
 ## Current version
-`0.1.0` — see `pyproject.toml`.
+`0.2.0` — see `pyproject.toml`.
