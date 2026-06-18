@@ -8,12 +8,17 @@ look. Built for fast batch conversion with good **Panasonic Lumix S-series
 ## The look (hardcoded)
 
 - **White balance:** as shot in camera (read from the RAW).
-- **Exposure:** straight from the RAW. Pass `--autoexp` to analyze the image and
-  auto-correct exposure (brighten/darken toward a good midtone without clipping
-  highlights).
+- **Exposure:** a default **+0.7 EV** baseline lift (matching Darktable's
+  scene-referred default, which compensates for the tone curve cameras bake into
+  their previews). Pass `--autoexp` to instead meter the image and auto-correct
+  exposure (center-weighted, with a highlight cap so a bright face never blows).
+  Brightening is routed through a two-decode blend so the lift can't clip
+  highlights.
 - **Color:** vibrant, reasonably high saturation (vibrance-style, so already-
-  saturated areas don't posterize).
-- **Tone/contrast:** a gentle, non-clipping S-curve for a clean, punchy baseline.
+  saturated areas don't posterize), with **skin-tone protection** so faces stay
+  natural rather than going orange.
+- **Tone/contrast:** a filmic curve — gentle shadow lift, midtone S-curve, and a
+  smooth highlight shoulder that rolls off to white instead of clipping.
 
 You can nudge the baked-in look per run with `--saturation` / `--contrast`
 multipliers (`1.0` = default look, `0.0` = neutral).
