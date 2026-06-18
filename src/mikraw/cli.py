@@ -25,7 +25,7 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="JPEG quality percent (default: 90)")
     p.add_argument("-o", "--output", default=".", metavar="DIR",
                    help="output directory (created if missing)")
-    p.add_argument("--autoexp", "-autoexp", action="store_true",
+    p.add_argument("--autoexp", action="store_true",
                    help="analyze the image and auto-adjust exposure")
     p.add_argument("-r", "--recursive", action="store_true",
                    help="recurse into subdirectories")
