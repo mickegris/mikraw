@@ -15,5 +15,6 @@ venv/
 
 # Output / fixtures
 out/
+out_*/
 tests/fixtures/*.RW2
 tests/fixtures/*.rw2

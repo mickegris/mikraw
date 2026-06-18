@@ -20,6 +20,13 @@ log = logging.getLogger("mikraw")
 _BLEND_DARK = 0.40
 _BLEND_LIGHT = 0.90
 
+# Baseline exposure lift for the non-autoexp path. Matches Darktable's documented
+# default of +0.7 EV applied to every image -- midtone brightening that
+# compensates for the +0.5..1.2 EV tone curve cameras bake into their previews
+# (which LibRaw's raw decode does not). Routed through the two-decode blend so
+# the lift can't blow highlights. Autoexp meters its own exposure and ignores this.
+BASE_EXPOSURE = 2.0 ** 0.7   # ~1.62
+
 _LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 
 
@@ -88,12 +95,15 @@ def convert_one(src: str, opts: Options) -> FileResult:
         out.parent.mkdir(parents=True, exist_ok=True)
 
         with rawpy.imread(src) as raw:
-            exp_shift = 1.0
             if opts.autoexp:
                 from mikraw import autoexp
 
                 exp_shift = autoexp.analyze(raw)
                 log.debug("%s: autoexp exp_shift=%.3f", src, exp_shift)
+            else:
+                # Default Darktable-style baseline lift (no metering).
+                exp_shift = BASE_EXPOSURE
+                log.debug("%s: base exp_shift=%.3f", src, exp_shift)
 
             if exp_shift > 1.01:
                 # Two-decode blend: subject exposure + highlight preservation.
