@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mikraw"
-version = "0.2.0"
+version = "0.3.0"
 description = "Generic batch RAW-to-JPEG converter with a fixed vibrant look, developed with Panasonic Lumix files"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,7 +20,8 @@ dependencies = [
 
 [project.optional-dependencies]
 exif = ["pyexiv2>=2.8"]
-dev = ["pytest>=7.0", "pyexiv2>=2.8"]
+tiff = ["tifffile>=2022.2"]
+dev = ["pytest>=7.0", "pyexiv2>=2.8", "tifffile>=2022.2"]
 
 [project.scripts]
 mikraw = "mikraw.cli:main"

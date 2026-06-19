@@ -167,14 +167,25 @@ def apply_look(
     contrast_mult: float = 1.0,
     saturation_mult: float = 1.0,
     clarity_mult: float = 1.0,
+    monochrome: bool = False,
+    bits: int = 8,
 ) -> np.ndarray:
-    """Apply the develop look to a uint16 RGB array, returning uint8 RGB.
+    """Apply the develop look to a uint16 RGB array, returning uint8 or uint16 RGB.
 
     contrast_mult / saturation_mult / clarity_mult scale the hardcoded strengths;
     1.0 keeps the baked-in look, 0.0 disables that stage.
+    monochrome=True converts to luminance-weighted grayscale (skips vibrance).
+    bits=16 returns uint16 for lossless TIFF output; default 8 returns uint8 JPEG-ready.
     """
     x = arr16.astype(np.float32) / 65535.0
     x = _filmic_curve(x, contrast_mult)
     x = _local_contrast(x, LOCAL_CONTRAST * clarity_mult)
-    x = _vibrance(x, SATURATION_BASE * saturation_mult, SATURATION_VIBRANCE * saturation_mult)
-    return np.clip(x * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    if monochrome:
+        luma = x @ _LUMA
+        x = np.stack([luma, luma, luma], axis=-1)
+    else:
+        x = _vibrance(x, SATURATION_BASE * saturation_mult, SATURATION_VIBRANCE * saturation_mult)
+    x = np.clip(x, 0.0, 1.0)
+    if bits == 16:
+        return (x * 65535.0 + 0.5).astype(np.uint16)
+    return (x * 255.0 + 0.5).astype(np.uint8)

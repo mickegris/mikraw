@@ -68,3 +68,37 @@ def test_bad_quality_returns_two(tmp_path):
     _touch(tmp_path / "a.RW2")
     rc = main(["-q", "150", str(tmp_path)])
     assert rc == 2
+
+
+def test_tiff_output_path(tmp_path):
+    opts = Options(output_dir=str(tmp_path), output_format="tiff")
+    out = output_path("/photos/DSC001.RW2", opts)
+    assert out.suffix == ".tif"
+
+
+def test_list_profiles_exits_zero(capsys):
+    rc = main(["--list-profiles"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "vibrant" in out
+    assert "neutral" in out
+    assert "monochrome" in out
+
+
+def test_profile_neutral_dry_run(tmp_path, capsys):
+    _touch(tmp_path / "a.RW2")
+    rc = main(["--dry-run", "--profile", "neutral", "-o", str(tmp_path / "out"), str(tmp_path)])
+    assert rc == 0
+
+
+def test_profile_override_contrast(tmp_path, capsys):
+    _touch(tmp_path / "a.RW2")
+    # neutral profile + explicit --contrast 2.0 should not crash
+    rc = main(["--dry-run", "--profile", "neutral", "--contrast", "2.0",
+               "-o", str(tmp_path / "out"), str(tmp_path)])
+    assert rc == 0
+
+
+def test_no_inputs_returns_two(capsys):
+    rc = main([])
+    assert rc == 2

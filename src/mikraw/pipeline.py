@@ -42,12 +42,15 @@ class Options:
     contrast: float = 1.0
     saturation: float = 1.0
     clarity: float = 1.0
+    monochrome: bool = False
+    output_format: str = "jpeg"  # "jpeg" or "tiff"
     copy_exif: bool = True
 
 
 def output_path(src: str, opts: Options) -> Path:
     stem = Path(src).stem
-    return Path(opts.output_dir) / f"{stem}{opts.suffix}.jpg"
+    ext = ".tif" if opts.output_format == "tiff" else ".jpg"
+    return Path(opts.output_dir) / f"{stem}{opts.suffix}{ext}"
 
 
 def _postprocess(raw, exp_shift: float, rawpy):
@@ -90,9 +93,14 @@ def convert_one(src: str, opts: Options) -> FileResult:
     if out.exists() and not opts.overwrite:
         return FileResult(src, out_s, Status.SKIPPED, "output exists")
 
+    # Import rawpy eagerly so we can reference rawpy.LibRawError in the except below.
     try:
         import rawpy  # imported lazily so worker startup is cheap
+    except ImportError:
+        return FileResult(src, out_s, Status.FAILED,
+                          "rawpy not installed — run: pip install rawpy")
 
+    try:
         out.parent.mkdir(parents=True, exist_ok=True)
 
         with rawpy.imread(src) as raw:
@@ -112,14 +120,26 @@ def convert_one(src: str, opts: Options) -> FileResult:
             else:
                 arr16 = _postprocess(raw, exp_shift, rawpy)
 
-        rgb8 = develop.apply_look(arr16, opts.contrast, opts.saturation, opts.clarity)
+        tiff_out = opts.output_format == "tiff"
+        rgb = develop.apply_look(
+            arr16, opts.contrast, opts.saturation, opts.clarity,
+            opts.monochrome, bits=16 if tiff_out else 8,
+        )
 
-        from PIL import Image
+        if tiff_out:
+            try:
+                import tifffile
+            except ImportError:
+                return FileResult(src, out_s, Status.FAILED,
+                                  "tifffile is required for TIFF output — run: pip install tifffile")
+            tifffile.imwrite(out_s, rgb, photometric="rgb", compression="lzw")
+        else:
+            from PIL import Image
 
-        save_kwargs = {"quality": int(opts.quality), "optimize": True}
-        if opts.quality >= 90:
-            save_kwargs["subsampling"] = 0  # 4:4:4 for high quality
-        Image.fromarray(rgb8, "RGB").save(out_s, "JPEG", **save_kwargs)
+            save_kwargs: dict = {"quality": int(opts.quality), "optimize": True}
+            if opts.quality >= 90:
+                save_kwargs["subsampling"] = 0  # 4:4:4 for high quality
+            Image.fromarray(rgb, "RGB").save(out_s, "JPEG", **save_kwargs)
 
         msg = ""
         if opts.copy_exif:
@@ -130,6 +150,9 @@ def convert_one(src: str, opts: Options) -> FileResult:
 
         return FileResult(src, out_s, Status.CONVERTED, msg)
 
+    except rawpy.LibRawError as e:
+        return FileResult(src, out_s, Status.FAILED,
+                          f"unsupported or unreadable RAW file: {e}")
     except Exception as e:
         log.debug("convert failed for %s", src, exc_info=True)
         return FileResult(src, out_s, Status.FAILED, str(e))
