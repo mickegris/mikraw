@@ -1,30 +1,40 @@
 # mikraw
 
-A generic command-line **RAW → JPEG** converter that applies a fixed, opinionated
-"develop" look, built for fast batch conversion. It works with any RAW format
-[LibRaw](https://www.libraw.org/) supports (via
+A generic command-line **RAW → JPEG / TIFF** converter that applies a fixed,
+opinionated "develop" look, built for fast batch conversion. It works with any RAW
+format [LibRaw](https://www.libraw.org/) supports (via
 [rawpy](https://github.com/letmaik/rawpy)); it is developed and tuned using
 **Panasonic Lumix (`.RW2`)** files.
 
-## The look (hardcoded)
+## The look
 
-- **White balance:** as shot in camera (read from the RAW).
+The look is applied via a **profile** (`--profile NAME`, default: `vibrant`):
+
+| Profile | Description |
+| --- | --- |
+| `vibrant` | Filmic contrast, local clarity, and vibrant colors **(default)** |
+| `neutral` | Minimal processing — faithful to the RAW decode |
+| `camera` | Approximates what the camera's own JPEG engine would produce |
+| `monochrome` | Black and white with punchy contrast and high clarity |
+| `landscape` | Maximum clarity and saturation for outdoor/nature shots |
+
+Run `mikraw --list-profiles` for the full list with descriptions.
+
+What `vibrant` does:
+- **White balance:** as shot in camera.
 - **Exposure:** a default **+0.7 EV** baseline lift (matching Darktable's
-  scene-referred default, which compensates for the tone curve cameras bake into
-  their previews). Pass `--autoexp` to instead meter the image and auto-correct
-  exposure (center-weighted, with a highlight cap so a bright face never blows).
-  Brightening is routed through a two-decode blend so the lift can't clip
-  highlights.
-- **Color:** vibrant, reasonably high saturation (vibrance-style, so already-
-  saturated areas don't posterize), with **skin-tone protection** so faces stay
-  natural rather than going orange.
-- **Tone/contrast:** a filmic curve — gentle shadow lift, midtone S-curve, and a
-  smooth highlight shoulder that rolls off to white instead of clipping.
-- **Local contrast ("clarity"):** a multi-scale luminance boost that adds
-  micro-contrast and depth (halo-suppressed), approximating a tone-equalizer.
+  scene-referred default). Pass `--autoexp` to meter the image automatically
+  (center-weighted, with a highlight cap so bright faces never blow). Brightening
+  uses a two-decode blend so highlights are always preserved.
+- **Color:** vibrance-style saturation boost with **skin-tone protection** so faces
+  stay natural rather than going orange.
+- **Tone/contrast:** a filmic curve — shadow lift, midtone S-curve, and a smooth
+  highlight shoulder.
+- **Local contrast ("clarity"):** multi-scale luminance boost for micro-contrast
+  and depth (halo-suppressed).
 
-You can nudge the baked-in look per run with `--saturation` / `--contrast` /
-`--clarity` multipliers (`1.0` = default look, `0.0` = neutral).
+The `--contrast` / `--saturation` / `--clarity` flags override the profile's
+values when provided (`1.0` = profile default, `0.0` = that stage off).
 
 ## Install
 
@@ -32,7 +42,9 @@ Requires Python 3.10+.
 
 ```bash
 pip install -e .            # core (rawpy, numpy, Pillow, tqdm)
-pip install -e ".[exif]"    # also copy EXIF metadata into the JPEGs (pyexiv2)
+pip install -e ".[exif]"    # + copy EXIF metadata into the output (pyexiv2)
+pip install -e ".[tiff]"    # + 16-bit TIFF output (tifffile)
+pip install -e ".[dev]"     # all of the above + pytest
 ```
 
 ## Usage
@@ -44,8 +56,15 @@ mikraw -q 92 some.RW2 -o ./out
 # bulk: a whole folder, recursive, 8 workers, with auto-exposure
 mikraw -r -j 8 --autoexp "C:\photos\lumix" -o ./out
 
+# use a profile
+mikraw --profile monochrome "C:\photos\lumix" -o ./out_bw
+mikraw --profile landscape --clarity 2.0 shot.RW2 -o ./out
+
+# 16-bit TIFF for further editing in Lightroom / Darktable
+mikraw --tiff some.RW2 -o ./out
+
 # globs work (mikraw expands them itself on Windows too)
-mikraw "*.RW2"
+mikraw "*.RW2" -o ./out
 
 # see what would happen, change nothing
 mikraw --dry-run -r .
@@ -57,31 +76,35 @@ mikraw --dry-run -r .
 | --- | --- |
 | `-q, --quality N` | JPEG quality percent (default 90) |
 | `-o, --output DIR` | output directory (default: current dir) |
+| `--profile NAME` | named look preset (default: `vibrant`) |
+| `--list-profiles` | print all profiles and exit |
 | `--autoexp` | analyze + auto-adjust exposure |
+| `--tiff` | output 16-bit lossless TIFF instead of JPEG |
 | `-r, --recursive` | recurse into subdirectories |
 | `-j, --jobs N` | parallel workers (default: CPU count) |
-| `--overwrite` | overwrite existing JPEGs (default: skip) |
-| `--suffix TEXT` | text added before `.jpg` |
-| `--saturation F` / `--contrast F` / `--clarity F` | scale the baked-in look |
+| `--overwrite` | overwrite existing output (default: skip) |
+| `--suffix TEXT` | text added before the extension |
+| `--contrast F` / `--saturation F` / `--clarity F` | override profile multiplier |
 | `--no-exif` | don't copy EXIF metadata |
 | `--dry-run` | list planned conversions and exit |
 
-Output files are named `<source-stem><suffix>.jpg`. EXIF (camera, lens, date,
-ISO, exposure) is copied from the RAW and orientation is baked into the pixels.
+Output files are named `<source-stem><suffix>.jpg` (or `.tif` with `--tiff`).
+EXIF (camera, lens, date, ISO, exposure) is copied from the RAW and orientation is
+baked into the pixels.
 
 ## Notes on RW2
 
 RW2 is proprietary and undocumented, so brand-new Lumix bodies released after the
 bundled LibRaw version may need a `rawpy`/LibRaw upgrade. The established S-series
-(S1 / S1R / S5 / S5II) decode well today.
+(S1 / S1R / S5 / S5II) decode well today. If a file is unreadable, mikraw reports
+a clear "unsupported or unreadable RAW file" error rather than a raw LibRaw code.
 
 ## Development
 
 ```bash
 pip install -e ".[dev]"
-pytest
+pytest          # 42 tests, all I/O-free
 ```
 
-Tests cover the look engine, auto-exposure heuristic, and CLI/discovery logic
-(all I/O-free). The end-to-end RAW test runs only if rawpy and a fixture are
-present.
+Tests cover the look engine (filmic curve, local contrast, vibrance, monochrome,
+16-bit output), auto-exposure heuristic, profiles, and CLI/discovery logic.

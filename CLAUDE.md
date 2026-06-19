@@ -4,24 +4,28 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 ## Overview
 `mikraw` is a cross-platform **CLI** that bulk-converts camera **RAW** files to
-**JPEG** with a fixed, opinionated "develop" look. Built in **Python** on
-**rawpy** (LibRaw) + **numpy** + **Pillow**. Primary target: fast batch
-conversion of **Panasonic Lumix S-series (`.RW2`)** files.
+**JPEG** (or 16-bit **TIFF**) with a fixed, opinionated "develop" look. Built in
+**Python** on **rawpy** (LibRaw) + **numpy** + **Pillow**. Primary target: fast
+batch conversion of **Panasonic Lumix S-series (`.RW2`)** files.
 
-The look is hardcoded by design (see "Develop pipeline"). The user tunes only
-exposure mode (`--autoexp`), JPEG quality, and optional `--saturation` /
-`--contrast` multipliers.
+The look is hardcoded by design (see "Develop pipeline") and selected via
+`--profile` (default: `vibrant`). Per-run multipliers `--saturation` /
+`--contrast` / `--clarity` override the profile value when provided.
 
 ## Commands
 Run from the repo root (`C:\Users\mikae\mikraw`). The dev interpreter lives in
 `.venv`; a `mikraw.bat` launcher wraps `python -m mikraw`.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest          # run the test suite (23 tests, I/O-free)
+.\.venv\Scripts\python.exe -m pytest          # run the test suite (42 tests, I/O-free)
 .\.venv\Scripts\python.exe -m pytest -q -k autoexp   # subset
 .\mikraw --help                               # run the CLI via the venv launcher
 .\mikraw --autoexp --overwrite -o .\out path\to\file.RW2   # convert one file
+.\mikraw --list-profiles                      # show all profiles
+.\mikraw --profile landscape -o .\out path\to\file.RW2    # use a profile
+.\mikraw --tiff -o .\out path\to\file.RW2    # 16-bit TIFF output
 pip install -e ".[dev]"                       # editable install + dev deps
+pip install tifffile                          # needed for --tiff output
 ```
 
 - Tests are pure-logic `tests/test_*.py` (look engine incl. local contrast,
@@ -36,7 +40,8 @@ pip install -e ".[dev]"                       # editable install + dev deps
 - `numpy` — the develop math
 - `Pillow` — JPEG encode
 - `tqdm` — bulk progress bar
-- `pyexiv2` — optional, copies EXIF from RAW into the JPEG (`[exif]`/`[dev]` extra)
+- `tifffile` — optional, 16-bit TIFF output (`[tiff]`/`[dev]` extra)
+- `pyexiv2` — optional, copies EXIF from RAW into the output (`[exif]`/`[dev]` extra)
 - stdlib `argparse` + `multiprocessing` — CLI and parallel batch
 
 ## Project structure
@@ -45,14 +50,36 @@ src/mikraw/
   __main__.py    python -m mikraw entry
   cli.py         argparse, input discovery, builds Options, dispatches to batch
   batch.py       discover files, multiprocessing pool, tqdm, skip/overwrite, summary
-  pipeline.py    convert_one(): decode -> (blend) -> develop -> JPEG -> EXIF
+  pipeline.py    convert_one(): decode -> (blend) -> develop -> JPEG/TIFF -> EXIF
   develop.py     the hardcoded look: filmic tone curve + vibrance + skin protection
+  profiles.py    named look presets (Profile dataclass + PROFILES dict)
   autoexp.py     analyze() -> exp_shift (center-weighted metering + highlight cap)
   exif.py        copy_metadata() via pyexiv2, bakes orientation = normal
   errors.py      FileResult + Status enum
 tests/           pure-logic unit tests
 mikraw.bat       venv launcher (python -m mikraw)
 ```
+
+## Profiles (`profiles.py`)
+Named presets that bundle look multipliers. Resolved in `cli.main()`; explicit
+`--contrast`/`--saturation`/`--clarity` CLI flags override the profile's value.
+
+| Profile      | contrast | saturation | clarity | monochrome |
+|-------------|----------|------------|---------|------------|
+| `vibrant`   | 1.0      | 1.0        | 1.0     | no (default) |
+| `neutral`   | 0.0      | 0.0        | 0.0     | no |
+| `camera`    | 0.4      | 0.3        | 0.1     | no |
+| `monochrome`| 1.5      | 0.0        | 2.0     | yes |
+| `landscape` | 1.2      | 1.5        | 1.8     | no |
+
+Adding a profile: add a `Profile(...)` entry to `PROFILES` in `profiles.py`.
+No other file needs to change.
+
+## TIFF output (`--tiff`)
+Saves a 16-bit-per-channel RGB TIFF (LZW compressed) using `tifffile`. The full
+develop look is applied at 16-bit precision so shadows/highlights keep full range.
+Requires `pip install tifffile` (or `pip install -e ".[tiff]"`). EXIF copy works
+the same as JPEG. Output extension is `.tif`.
 
 ## Develop pipeline (the look)
 Per file, `pipeline.convert_one`:
@@ -78,11 +105,12 @@ Per file, `pipeline.convert_one`:
      blur, `_blur`), tanh soft-clipped (`LOCAL_CONTRAST_CLIP`) to avoid edge
      halos, added equally to all channels (preserves chroma). This is the
      micro-contrast/depth that Darktable's tone-equalizer gives.
-   - `_vibrance`: luma-preserving saturation boost (`SATURATION_BASE` +
-     `SATURATION_VIBRANCE`, tapered by current chroma) — **with skin-tone
-     protection**: pixels near the skin hue (`_skin_weight`, gaussian around
-     `SKIN_HUE_CENTER`) get `SKIN_PROTECT` less boost so faces don't go orange.
-5. **Encode**: 8-bit JPEG, `quality` (4:4:4 subsampling when `quality >= 90`).
+   - `_vibrance` (color) or grayscale conversion (monochrome profile): luma-
+     preserving saturation boost with skin-tone protection, **or** for monochrome:
+     luminance-weighted grayscale expanded back to 3 channels (vibrance skipped).
+   - `bits` parameter: 8 → uint8 for JPEG; 16 → uint16 for TIFF.
+5. **Encode**: JPEG at `quality` (4:4:4 subsampling when `quality >= 90`), or
+   16-bit LZW TIFF via `tifffile` when `--tiff` was passed.
 6. **EXIF**: `exif.copy_metadata` copies tags from the RAW and sets Orientation =
    normal (pixels are already upright). Skipped with `--no-exif`.
 
@@ -132,4 +160,4 @@ the tanh soft-clip rather than a guide image to stay halo-free.
   user to visually confirm conversions.
 
 ## Current version
-`0.2.0` — see `pyproject.toml`.
+`0.3.0` — see `pyproject.toml`.
