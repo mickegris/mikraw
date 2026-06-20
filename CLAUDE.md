@@ -17,15 +17,18 @@ Run from the repo root (`C:\Users\mikae\mikraw`). The dev interpreter lives in
 `.venv`; a `mikraw.bat` launcher wraps `python -m mikraw`.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest          # run the test suite (42 tests, I/O-free)
+.\.venv\Scripts\python.exe -m pytest          # run the test suite (48 tests, I/O-free)
 .\.venv\Scripts\python.exe -m pytest -q -k autoexp   # subset
 .\mikraw --help                               # run the CLI via the venv launcher
-.\mikraw --autoexp --overwrite -o .\out path\to\file.RW2   # convert one file
+.\mikraw --overwrite -o .\out path\to\file.RW2         # convert (autoexp on by default)
+.\mikraw --no-autoexp --overwrite -o .\out path\to\file.RW2  # fixed +0.7 EV baseline
 .\mikraw --list-profiles                      # show all profiles
-.\mikraw --profile landscape -o .\out path\to\file.RW2    # use a profile
+.\mikraw --profile portrait -o .\out path\to\file.RW2 # use a profile
 .\mikraw --tiff -o .\out path\to\file.RW2    # 16-bit TIFF output
+.\mikraw --gpu -o .\out path\to\file.RW2     # OpenCL GPU develop pipeline
 pip install -e ".[dev]"                       # editable install + dev deps
 pip install tifffile                          # needed for --tiff output
+pip install pyopencl                          # needed for --gpu
 ```
 
 - Tests are pure-logic `tests/test_*.py` (look engine incl. local contrast,
@@ -40,8 +43,9 @@ pip install tifffile                          # needed for --tiff output
 - `numpy` — the develop math
 - `Pillow` — JPEG encode
 - `tqdm` — bulk progress bar
-- `tifffile` — optional, 16-bit TIFF output (`[tiff]`/`[dev]` extra)
-- `pyexiv2` — optional, copies EXIF from RAW into the output (`[exif]`/`[dev]` extra)
+- `tifffile` — optional, 16-bit TIFF output (`[tiff]` extra)
+- `pyopencl` — optional, OpenCL GPU develop pipeline (`[gpu]` extra)
+- `pyexiv2` — optional, copies EXIF from RAW into the output (`[exif]` extra)
 - stdlib `argparse` + `multiprocessing` — CLI and parallel batch
 
 ## Project structure
@@ -52,6 +56,7 @@ src/mikraw/
   batch.py       discover files, multiprocessing pool, tqdm, skip/overwrite, summary
   pipeline.py    convert_one(): decode -> (blend) -> develop -> JPEG/TIFF -> EXIF
   develop.py     the hardcoded look: filmic tone curve + vibrance + skin protection
+  gpu.py         OpenCL develop path (optional, falls back to numpy automatically)
   profiles.py    named look presets (Profile dataclass + PROFILES dict)
   autoexp.py     analyze() -> exp_shift (center-weighted metering + highlight cap)
   exif.py        copy_metadata() via pyexiv2, bakes orientation = normal
@@ -69,11 +74,34 @@ Named presets that bundle look multipliers. Resolved in `cli.main()`; explicit
 | `vibrant`   | 1.0      | 1.0        | 1.0     | no (default) |
 | `neutral`   | 0.0      | 0.0        | 0.0     | no |
 | `camera`    | 0.4      | 0.3        | 0.1     | no |
+| `portrait`  | 0.7      | 0.8        | 0.3     | no |
 | `monochrome`| 1.5      | 0.0        | 2.0     | yes |
 | `landscape` | 1.2      | 1.5        | 1.8     | no |
 
 Adding a profile: add a `Profile(...)` entry to `PROFILES` in `profiles.py`.
 No other file needs to change.
+
+## Auto-exposure is now the default
+
+`Options.autoexp = True` and `--autoexp` is on by default in the CLI. Use
+`--no-autoexp` to revert to the fixed `BASE_EXPOSURE = 2**0.7` (+0.7 EV)
+baseline. `BooleanOptionalAction` provides both flags automatically.
+
+## OpenCL GPU acceleration (`--gpu`)
+
+`--gpu` routes the develop pipeline through `gpu.try_apply_look()` (OpenCL kernels
+in `gpu.py`). If pyopencl is unavailable or no platform is found it falls back to
+numpy silently. Requires `pip install pyopencl`.
+
+Architecture notes:
+- `--gpu` forces `jobs=1` (multiple processes competing for one GPU would be slower
+  than CPU parallelism).
+- The OpenCL context, queue, and compiled program are cached thread-locally in
+  `gpu._local` so they're initialised once per process.
+- Blur kernels use a brute-force per-pixel approach (each work-item sums 2r+1
+  inputs). For typical radii (r≤120) on a modern GPU this is fast enough, but a
+  shared-memory sliding-window approach would be ~10× more efficient.
+- `develop.py` has no knowledge of GPU — the split is in `pipeline.convert_one`.
 
 ## TIFF output (`--tiff`)
 Saves a 16-bit-per-channel RGB TIFF (LZW compressed) using `tifffile`. The full
@@ -160,4 +188,4 @@ the tanh soft-clip rather than a guide image to stay halo-free.
   user to visually confirm conversions.
 
 ## Current version
-`0.3.0` — see `pyproject.toml`.
+`0.4.0` — see `pyproject.toml`.

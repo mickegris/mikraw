@@ -102,3 +102,15 @@ def test_profile_override_contrast(tmp_path, capsys):
 def test_no_inputs_returns_two(capsys):
     rc = main([])
     assert rc == 2
+
+
+def test_no_autoexp_flag_accepted(tmp_path):
+    _touch(tmp_path / "a.RW2")
+    rc = main(["--dry-run", "--no-autoexp", "-o", str(tmp_path / "out"), str(tmp_path)])
+    assert rc == 0
+
+
+def test_gpu_flag_accepted(tmp_path):
+    _touch(tmp_path / "a.RW2")
+    rc = main(["--dry-run", "--gpu", "-o", str(tmp_path / "out"), str(tmp_path)])
+    assert rc == 0

@@ -36,6 +36,11 @@ PROFILES: dict[str, Profile] = {
         description="Approximates what the camera's own JPEG engine would produce",
         contrast=0.4, saturation=0.3, clarity=0.1,
     ),
+    "portrait": Profile(
+        name="portrait",
+        description="Flattering for faces — soft clarity, natural skin tones, gentle contrast",
+        contrast=0.7, saturation=0.8, clarity=0.3,
+    ),
     "monochrome": Profile(
         name="monochrome",
         description="Black and white with punchy contrast and strong local clarity",

@@ -35,6 +35,13 @@ def test_neutral_disables_look():
     assert not p.monochrome
 
 
+def test_portrait_has_reduced_clarity_and_saturation():
+    p = PROFILES["portrait"]
+    assert p.clarity < PROFILES["vibrant"].clarity
+    assert p.saturation < PROFILES["vibrant"].saturation
+    assert not p.monochrome
+
+
 def test_monochrome_profile_is_flagged():
     assert PROFILES["monochrome"].monochrome is True
 

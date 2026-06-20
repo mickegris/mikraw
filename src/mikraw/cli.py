@@ -31,10 +31,14 @@ def _build_parser() -> argparse.ArgumentParser:
                    help=f"named look preset (default: %(default)s; see --list-profiles)")
     p.add_argument("--list-profiles", action="store_true",
                    help="print all available profiles and exit")
-    p.add_argument("--autoexp", action="store_true",
-                   help="analyze the image and auto-adjust exposure")
+    p.add_argument("--autoexp", default=True, action=argparse.BooleanOptionalAction,
+                   help="auto-adjust exposure (default: on; "
+                        "--no-autoexp uses the fixed +0.7 EV baseline instead)")
     p.add_argument("--tiff", action="store_true",
                    help="output 16-bit lossless TIFF instead of JPEG (requires: pip install tifffile)")
+    p.add_argument("--gpu", action="store_true",
+                   help="use OpenCL GPU for the develop pipeline "
+                        "(requires: pip install pyopencl; implies -j 1)")
     p.add_argument("-r", "--recursive", action="store_true",
                    help="recurse into subdirectories")
     p.add_argument("-j", "--jobs", type=int, default=0,
@@ -84,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     jobs = args.jobs if args.jobs > 0 else (os.cpu_count() or 1)
+    if args.gpu:
+        jobs = 1  # GPU parallelizes the pipeline internally; multiple processes would compete
 
     # Resolve profile; CLI multipliers override when explicitly provided.
     profile = PROFILES[args.profile]
@@ -98,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         clarity=args.clarity if args.clarity is not None else profile.clarity,
         monochrome=profile.monochrome,
         output_format="tiff" if args.tiff else "jpeg",
+        use_gpu=args.gpu,
         copy_exif=not args.no_exif,
     )
 
