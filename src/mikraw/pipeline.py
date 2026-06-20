@@ -1,7 +1,8 @@
-"""Per-file conversion: RAW -> develop look -> JPEG (+ EXIF)."""
+"""Per-file conversion: RAW -> develop look -> JPEG/TIFF (+ EXIF)."""
 
 from __future__ import annotations
 
+import io
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,19 @@ BASE_EXPOSURE = 2.0 ** 0.7   # ~1.62
 _LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 
 
+def _srgb_icc() -> bytes | None:
+    """Return the sRGB ICC profile as bytes, generated once from PIL's built-in profile."""
+    if not hasattr(_srgb_icc, "_cached"):
+        try:
+            from PIL import ImageCms
+            _srgb_icc._cached = ImageCms.ImageCmsProfile(
+                ImageCms.createProfile("sRGB")
+            ).tobytes()
+        except Exception:
+            _srgb_icc._cached = None
+    return _srgb_icc._cached
+
+
 @dataclass
 class Options:
     """Conversion options. Must stay picklable (sent to worker processes)."""
@@ -43,8 +57,10 @@ class Options:
     saturation: float = 1.0
     clarity: float = 1.0
     monochrome: bool = False
-    output_format: str = "jpeg"  # "jpeg" or "tiff"
-    use_gpu: bool = False
+    output_format: str = "jpeg"   # "jpeg" or "tiff"
+    use_gpu: bool = True
+    colorspace: str = "srgb"      # "srgb" or "adobergb"
+    dpi: int = 300
     copy_exif: bool = True
 
 
@@ -54,14 +70,15 @@ def output_path(src: str, opts: Options) -> Path:
     return Path(opts.output_dir) / f"{stem}{opts.suffix}{ext}"
 
 
-def _postprocess(raw, exp_shift: float, rawpy):
+def _postprocess(raw, exp_shift: float, rawpy, colorspace: str = "srgb"):
     """Single rawpy decode with our standard settings."""
+    cs = rawpy.ColorSpace.Adobe if colorspace == "adobergb" else rawpy.ColorSpace.sRGB
     return raw.postprocess(
         use_camera_wb=True,
         no_auto_bright=True,
         exp_shift=exp_shift,
         output_bps=16,
-        output_color=rawpy.ColorSpace.sRGB,
+        output_color=cs,
         gamma=(2.222, 4.5),
         demosaic_algorithm=rawpy.DemosaicAlgorithm.AHD,
         highlight_mode=rawpy.HighlightMode.Clip,
@@ -69,15 +86,15 @@ def _postprocess(raw, exp_shift: float, rawpy):
     )
 
 
-def _blend_exposures(raw, exp_shift: float, rawpy) -> np.ndarray:
+def _blend_exposures(raw, exp_shift: float, rawpy, colorspace: str = "srgb") -> np.ndarray:
     """Decode twice and blend by luminance: highlights from base, subject from bright.
 
     Pixels with low luminance (shadows/midtones) come from the bright decode so
     the subject is properly exposed. Pixels with high luminance come from the
     base (exp_shift=1.0) decode so highlight detail is preserved and not clipped.
     """
-    base = _postprocess(raw, 1.0, rawpy).astype(np.float32) / 65535.0
-    bright = _postprocess(raw, exp_shift, rawpy).astype(np.float32) / 65535.0
+    base = _postprocess(raw, 1.0, rawpy, colorspace).astype(np.float32) / 65535.0
+    bright = _postprocess(raw, exp_shift, rawpy, colorspace).astype(np.float32) / 65535.0
 
     luma = (base @ _LUMA)[..., None]
     t = np.clip((luma - _BLEND_DARK) / (_BLEND_LIGHT - _BLEND_DARK), 0.0, 1.0)
@@ -117,9 +134,9 @@ def convert_one(src: str, opts: Options) -> FileResult:
 
             if exp_shift > 1.01:
                 # Two-decode blend: subject exposure + highlight preservation.
-                arr16 = _blend_exposures(raw, exp_shift, rawpy)
+                arr16 = _blend_exposures(raw, exp_shift, rawpy, opts.colorspace)
             else:
-                arr16 = _postprocess(raw, exp_shift, rawpy)
+                arr16 = _postprocess(raw, exp_shift, rawpy, opts.colorspace)
 
         tiff_out = opts.output_format == "tiff"
         bits = 16 if tiff_out else 8
@@ -139,20 +156,53 @@ def convert_one(src: str, opts: Options) -> FileResult:
                 opts.monochrome, bits=bits,
             )
 
+        # ICC profile: embed sRGB profile for sRGB output so viewers render it
+        # correctly. Adobe RGB output is saved without an embedded profile because
+        # the Adobe RGB ICC data is not freely redistributable; embed it afterwards
+        # with exiftool if your print workflow requires it.
+        icc = _srgb_icc() if opts.colorspace == "srgb" else None
+        if opts.colorspace == "adobergb":
+            log.debug("Adobe RGB saved without embedded ICC profile")
+
         if tiff_out:
             try:
                 import tifffile
             except ImportError:
                 return FileResult(src, out_s, Status.FAILED,
                                   "tifffile is required for TIFF output — run: pip install tifffile")
-            tifffile.imwrite(out_s, rgb, photometric="rgb", compression="lzw")
+
+            tiff_kw: dict = {
+                "photometric": "rgb",
+                "resolutionunit": 2,          # inch
+                "resolution": (opts.dpi, opts.dpi),
+            }
+            if icc:
+                tiff_kw["iccprofile"] = icc
+
+            try:
+                tifffile.imwrite(out_s, rgb, compression="lzw", **tiff_kw)
+            except Exception as lzw_err:
+                if "imagecodecs" in str(lzw_err).lower():
+                    log.warning(
+                        "LZW compression requires the imagecodecs package "
+                        "(pip install imagecodecs); saving uncompressed TIFF"
+                    )
+                    tifffile.imwrite(out_s, rgb, **tiff_kw)
+                else:
+                    raise
         else:
             from PIL import Image
 
-            save_kwargs: dict = {"quality": int(opts.quality), "optimize": True}
+            jpeg_kw: dict = {
+                "quality": int(opts.quality),
+                "optimize": True,
+                "dpi": (opts.dpi, opts.dpi),
+            }
             if opts.quality >= 90:
-                save_kwargs["subsampling"] = 0  # 4:4:4 for high quality
-            Image.fromarray(rgb, "RGB").save(out_s, "JPEG", **save_kwargs)
+                jpeg_kw["subsampling"] = 0  # 4:4:4 for high quality
+            if icc:
+                jpeg_kw["icc_profile"] = icc
+            Image.fromarray(rgb, "RGB").save(out_s, "JPEG", **jpeg_kw)
 
         msg = ""
         if opts.copy_exif:

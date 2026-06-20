@@ -17,7 +17,7 @@ Run from the repo root (`C:\Users\mikae\mikraw`). The dev interpreter lives in
 `.venv`; a `mikraw.bat` launcher wraps `python -m mikraw`.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest          # run the test suite (48 tests, I/O-free)
+.\.venv\Scripts\python.exe -m pytest          # run the test suite (51 tests, I/O-free)
 .\.venv\Scripts\python.exe -m pytest -q -k autoexp   # subset
 .\mikraw --help                               # run the CLI via the venv launcher
 .\mikraw --overwrite -o .\out path\to\file.RW2         # convert (autoexp on by default)
@@ -25,10 +25,10 @@ Run from the repo root (`C:\Users\mikae\mikraw`). The dev interpreter lives in
 .\mikraw --list-profiles                      # show all profiles
 .\mikraw --profile portrait -o .\out path\to\file.RW2 # use a profile
 .\mikraw --tiff -o .\out path\to\file.RW2    # 16-bit TIFF output
-.\mikraw --gpu -o .\out path\to\file.RW2     # OpenCL GPU develop pipeline
+.\mikraw --no-gpu -o .\out path\to\file.RW2  # force CPU-only (GPU is default)
 pip install -e ".[dev]"                       # editable install + dev deps
-pip install tifffile                          # needed for --tiff output
-pip install pyopencl                          # needed for --gpu
+pip install -e ".[tiff]"                      # needed for --tiff output
+pip install -e ".[gpu]"                       # needed to actually use GPU hardware
 ```
 
 - Tests are pure-logic `tests/test_*.py` (look engine incl. local contrast,
@@ -62,7 +62,8 @@ src/mikraw/
   exif.py        copy_metadata() via pyexiv2, bakes orientation = normal
   errors.py      FileResult + Status enum
 tests/           pure-logic unit tests
-mikraw.bat       venv launcher (python -m mikraw)
+mikraw.bat       Windows venv launcher  (python -m mikraw)
+mikraw.sh        Unix/macOS venv launcher (chmod +x first)
 ```
 
 ## Profiles (`profiles.py`)
@@ -87,27 +88,49 @@ No other file needs to change.
 `--no-autoexp` to revert to the fixed `BASE_EXPOSURE = 2**0.7` (+0.7 EV)
 baseline. `BooleanOptionalAction` provides both flags automatically.
 
-## OpenCL GPU acceleration (`--gpu`)
+## OpenCL GPU acceleration (on by default)
 
-`--gpu` routes the develop pipeline through `gpu.try_apply_look()` (OpenCL kernels
-in `gpu.py`). If pyopencl is unavailable or no platform is found it falls back to
-numpy silently. Requires `pip install pyopencl`.
+GPU processing is **on by default** — `Options.use_gpu = True` and `--gpu` is the
+default in the CLI. Pass `--no-gpu` to force CPU (numpy) only.
+
+`pipeline.convert_one` calls `gpu.try_apply_look()` first. If pyopencl is not
+installed, no OpenCL platform is found, or any kernel fails, it returns `None` and
+the CPU path runs instead. This fallback is silent (debug-level log only).
 
 Architecture notes:
-- `--gpu` forces `jobs=1` (multiple processes competing for one GPU would be slower
-  than CPU parallelism).
-- The OpenCL context, queue, and compiled program are cached thread-locally in
-  `gpu._local` so they're initialised once per process.
+- No `jobs=1` restriction. Each worker process gets its own OpenCL context
+  (cached in `gpu._local`); they run independently on the GPU or fall back to CPU.
+- All nine kernel objects (`k_filmic`, `k_luma`, etc.) are pre-created with
+  `cl.Kernel(program, name)` at compile time and stored in a `SimpleNamespace`.
+  Repeated calls reuse the same objects (avoids `RepeatedKernelRetrieval` warning).
 - Blur kernels use a brute-force per-pixel approach (each work-item sums 2r+1
-  inputs). For typical radii (r≤120) on a modern GPU this is fast enough, but a
-  shared-memory sliding-window approach would be ~10× more efficient.
-- `develop.py` has no knowledge of GPU — the split is in `pipeline.convert_one`.
+  inputs). For typical radii (r≤120) on a modern GPU this is fast enough.
+- `develop.py` has no knowledge of GPU — the split is entirely in
+  `pipeline.convert_one`.
 
 ## TIFF output (`--tiff`)
-Saves a 16-bit-per-channel RGB TIFF (LZW compressed) using `tifffile`. The full
-develop look is applied at 16-bit precision so shadows/highlights keep full range.
-Requires `pip install tifffile` (or `pip install -e ".[tiff]"`). EXIF copy works
-the same as JPEG. Output extension is `.tif`.
+Saves a 16-bit-per-channel RGB TIFF using `tifffile`. The full develop look is
+applied at 16-bit precision. LZW compression is used when `imagecodecs` is
+installed (included in `pip install -e ".[tiff]"`); if absent, mikraw logs a
+warning and saves uncompressed. Output extension is `.tif`.
+
+## Color space (`--colorspace srgb|adobergb`, default: `srgb`)
+Controls rawpy's `output_color` during decode (`rawpy.ColorSpace.sRGB` or
+`rawpy.ColorSpace.Adobe`). The develop pipeline math is color-space-agnostic —
+the difference is entirely in the gamut captured at decode time. Adobe RGB captures
+a wider gamut especially useful for professional printing.
+
+For sRGB output the sRGB ICC profile is embedded in both JPEG and TIFF (via
+`PIL.ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()`). Adobe
+RGB output has no embedded ICC profile (the spec is not freely redistributable);
+users who need it can embed with `exiftool`.
+
+## DPI (`--dpi N`, default: 300)
+Sets resolution metadata in the output file header. For TIFF this is the TIFF
+directory tag (`resolutionunit=2, resolution=(dpi, dpi)`), read by virtually all
+apps. For JPEG it sets the Pillow `dpi` kwarg, but the EXIF copy step may override
+it with the camera's own DPI when `--no-exif` is not set. Default of 300 DPI is
+standard for photo printing.
 
 ## Develop pipeline (the look)
 Per file, `pipeline.convert_one`:
@@ -119,7 +142,8 @@ Per file, `pipeline.convert_one`:
      tone curve cameras bake into previews (LibRaw's decode does not). Without it
      the output looks dark/dull.
 2. **Decode** with rawpy: `use_camera_wb=True` (WB as shot), `no_auto_bright=True`,
-   `output_bps=16`, sRGB, `gamma=(2.222, 4.5)`, AHD demosaic.
+   `output_bps=16`, sRGB or Adobe RGB per `--colorspace`, `gamma=(2.222, 4.5)`,
+   AHD demosaic.
 3. **Two-decode highlight blend** (`_blend_exposures`, only when `exp_shift > 1.01`):
    decode at `1.0` (highlights intact) and at `exp_shift` (subject bright), then
    blend by luminance with a smoothstep over `_BLEND_DARK=0.40`.._BLEND_LIGHT=0.90`.
@@ -138,7 +162,8 @@ Per file, `pipeline.convert_one`:
      luminance-weighted grayscale expanded back to 3 channels (vibrance skipped).
    - `bits` parameter: 8 → uint8 for JPEG; 16 → uint16 for TIFF.
 5. **Encode**: JPEG at `quality` (4:4:4 subsampling when `quality >= 90`), or
-   16-bit LZW TIFF via `tifffile` when `--tiff` was passed.
+   16-bit LZW TIFF via `tifffile` when `--tiff` was passed. sRGB ICC profile
+   embedded in output; DPI written to file header (default 300).
 6. **EXIF**: `exif.copy_metadata` copies tags from the RAW and sets Orientation =
    normal (pixels are already upright). Skipped with `--no-exif`.
 
@@ -188,4 +213,4 @@ the tanh soft-clip rather than a guide image to stay halo-free.
   user to visually confirm conversions.
 
 ## Current version
-`0.4.0` — see `pyproject.toml`.
+`0.5.0` — see `pyproject.toml`.

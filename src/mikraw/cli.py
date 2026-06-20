@@ -36,9 +36,11 @@ def _build_parser() -> argparse.ArgumentParser:
                         "--no-autoexp uses the fixed +0.7 EV baseline instead)")
     p.add_argument("--tiff", action="store_true",
                    help="output 16-bit lossless TIFF instead of JPEG (requires: pip install tifffile)")
-    p.add_argument("--gpu", action="store_true",
-                   help="use OpenCL GPU for the develop pipeline "
-                        "(requires: pip install pyopencl; implies -j 1)")
+    p.add_argument("--gpu", default=True, action=argparse.BooleanOptionalAction,
+                   help="use OpenCL GPU for the develop pipeline when available, "
+                        "falling back to CPU automatically (default: on). "
+                        "Requires pyopencl (pip install pyopencl). "
+                        "Pass --no-gpu to force CPU-only.")
     p.add_argument("-r", "--recursive", action="store_true",
                    help="recurse into subdirectories")
     p.add_argument("-j", "--jobs", type=int, default=0,
@@ -53,6 +55,14 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="override profile contrast multiplier (0 = neutral)")
     p.add_argument("--clarity", type=float, default=None,
                    help="override profile clarity/local-contrast multiplier (0 = neutral)")
+    p.add_argument("--colorspace", default="srgb", choices=["srgb", "adobergb"],
+                   help="output color space: srgb (default) or adobergb for a wider print gamut. "
+                        "sRGB ICC profile is embedded automatically; Adobe RGB is not (embed "
+                        "manually with exiftool if your print workflow requires it)")
+    p.add_argument("--dpi", type=int, default=300,
+                   help="resolution written to the output file header (default: 300). "
+                        "Applied to the TIFF header directly; for JPEG the camera EXIF "
+                        "value is used instead when --no-exif is not set")
     p.add_argument("--no-exif", action="store_true",
                    help="do not copy EXIF metadata into the output")
     p.add_argument("--dry-run", action="store_true",
@@ -88,8 +98,6 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     jobs = args.jobs if args.jobs > 0 else (os.cpu_count() or 1)
-    if args.gpu:
-        jobs = 1  # GPU parallelizes the pipeline internally; multiple processes would compete
 
     # Resolve profile; CLI multipliers override when explicitly provided.
     profile = PROFILES[args.profile]
@@ -104,7 +112,9 @@ def main(argv: list[str] | None = None) -> int:
         clarity=args.clarity if args.clarity is not None else profile.clarity,
         monochrome=profile.monochrome,
         output_format="tiff" if args.tiff else "jpeg",
-        use_gpu=args.gpu,
+        use_gpu=args.gpu,   # True by default; gpu.py falls back to CPU silently
+        colorspace=args.colorspace,
+        dpi=args.dpi,
         copy_exif=not args.no_exif,
     )
 
