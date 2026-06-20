@@ -36,7 +36,7 @@ class Options:
 
     output_dir: str
     quality: int = 90
-    autoexp: bool = False
+    autoexp: bool = True
     overwrite: bool = False
     suffix: str = ""
     contrast: float = 1.0
@@ -44,6 +44,7 @@ class Options:
     clarity: float = 1.0
     monochrome: bool = False
     output_format: str = "jpeg"  # "jpeg" or "tiff"
+    use_gpu: bool = False
     copy_exif: bool = True
 
 
@@ -121,10 +122,22 @@ def convert_one(src: str, opts: Options) -> FileResult:
                 arr16 = _postprocess(raw, exp_shift, rawpy)
 
         tiff_out = opts.output_format == "tiff"
-        rgb = develop.apply_look(
-            arr16, opts.contrast, opts.saturation, opts.clarity,
-            opts.monochrome, bits=16 if tiff_out else 8,
-        )
+        bits = 16 if tiff_out else 8
+
+        rgb = None
+        if opts.use_gpu:
+            from mikraw import gpu as _gpu
+            rgb = _gpu.try_apply_look(
+                arr16, opts.contrast, opts.saturation, opts.clarity,
+                opts.monochrome, bits,
+            )
+            if rgb is None:
+                log.warning("GPU path failed; falling back to CPU")
+        if rgb is None:
+            rgb = develop.apply_look(
+                arr16, opts.contrast, opts.saturation, opts.clarity,
+                opts.monochrome, bits=bits,
+            )
 
         if tiff_out:
             try:

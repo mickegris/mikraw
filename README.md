@@ -15,6 +15,7 @@ The look is applied via a **profile** (`--profile NAME`, default: `vibrant`):
 | `vibrant` | Filmic contrast, local clarity, and vibrant colors **(default)** |
 | `neutral` | Minimal processing — faithful to the RAW decode |
 | `camera` | Approximates what the camera's own JPEG engine would produce |
+| `portrait` | Soft clarity, natural skin tones, gentle contrast — ideal for people |
 | `monochrome` | Black and white with punchy contrast and high clarity |
 | `landscape` | Maximum clarity and saturation for outdoor/nature shots |
 
@@ -22,10 +23,10 @@ Run `mikraw --list-profiles` for the full list with descriptions.
 
 What `vibrant` does:
 - **White balance:** as shot in camera.
-- **Exposure:** a default **+0.7 EV** baseline lift (matching Darktable's
-  scene-referred default). Pass `--autoexp` to meter the image automatically
-  (center-weighted, with a highlight cap so bright faces never blow). Brightening
-  uses a two-decode blend so highlights are always preserved.
+- **Exposure:** auto-metered by default (center-weighted, 40th-percentile shadow
+  target, 92nd-percentile highlight cap so bright faces never blow). Brightening
+  uses a two-decode blend so highlights are always preserved. Pass `--no-autoexp`
+  to switch to a fixed **+0.7 EV** baseline lift instead.
 - **Color:** vibrance-style saturation boost with **skin-tone protection** so faces
   stay natural rather than going orange.
 - **Tone/contrast:** a filmic curve — shadow lift, midtone S-curve, and a smooth
@@ -44,6 +45,7 @@ Requires Python 3.10+.
 pip install -e .            # core (rawpy, numpy, Pillow, tqdm)
 pip install -e ".[exif]"    # + copy EXIF metadata into the output (pyexiv2)
 pip install -e ".[tiff]"    # + 16-bit TIFF output (tifffile)
+pip install -e ".[gpu]"     # + OpenCL GPU acceleration (pyopencl)
 pip install -e ".[dev]"     # all of the above + pytest
 ```
 
@@ -57,11 +59,18 @@ mikraw -q 92 some.RW2 -o ./out
 mikraw -r -j 8 --autoexp "C:\photos\lumix" -o ./out
 
 # use a profile
+mikraw --profile portrait "C:\photos\family" -o ./out_portraits
 mikraw --profile monochrome "C:\photos\lumix" -o ./out_bw
 mikraw --profile landscape --clarity 2.0 shot.RW2 -o ./out
 
+# disable auto-exposure (use fixed +0.7 EV baseline)
+mikraw --no-autoexp some.RW2 -o ./out
+
 # 16-bit TIFF for further editing in Lightroom / Darktable
 mikraw --tiff some.RW2 -o ./out
+
+# GPU-accelerated develop pipeline (requires pip install pyopencl)
+mikraw --gpu "C:\photos\lumix" -o ./out
 
 # globs work (mikraw expands them itself on Windows too)
 mikraw "*.RW2" -o ./out
@@ -78,8 +87,9 @@ mikraw --dry-run -r .
 | `-o, --output DIR` | output directory (default: current dir) |
 | `--profile NAME` | named look preset (default: `vibrant`) |
 | `--list-profiles` | print all profiles and exit |
-| `--autoexp` | analyze + auto-adjust exposure |
+| `--autoexp` / `--no-autoexp` | auto-adjust exposure (default: on) |
 | `--tiff` | output 16-bit lossless TIFF instead of JPEG |
+| `--gpu` | OpenCL GPU for the develop pipeline (requires pyopencl; implies `-j 1`) |
 | `-r, --recursive` | recurse into subdirectories |
 | `-j, --jobs N` | parallel workers (default: CPU count) |
 | `--overwrite` | overwrite existing output (default: skip) |
@@ -103,8 +113,9 @@ a clear "unsupported or unreadable RAW file" error rather than a raw LibRaw code
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 42 tests, all I/O-free
+pytest          # 48 tests, all I/O-free (GPU tests verify fallback without pyopencl)
 ```
 
 Tests cover the look engine (filmic curve, local contrast, vibrance, monochrome,
-16-bit output), auto-exposure heuristic, profiles, and CLI/discovery logic.
+16-bit output), auto-exposure heuristic, profiles, GPU fallback, and CLI/discovery
+logic. The GPU tests verify the graceful fallback path without requiring pyopencl.
