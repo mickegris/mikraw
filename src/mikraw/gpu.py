@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from types import SimpleNamespace
 from typing import Optional
 
 import numpy as np
@@ -263,9 +264,16 @@ __kernel void k_quantize_u16(
 """
 
 
+_KERNEL_NAMES = (
+    "k_filmic", "k_luma", "k_blur_h", "k_blur_v",
+    "k_local_contrast", "k_vibrance", "k_monochrome",
+    "k_quantize_u8", "k_quantize_u16",
+)
+
+
 def _get_cl():
-    """Return (ctx, queue, program). Compiled once per thread/process."""
-    if getattr(_local, "program", None) is None:
+    """Return (ctx, queue, kernels). Compiled once per thread/process."""
+    if getattr(_local, "kernels", None) is None:
         import pyopencl as cl
 
         ctx = None
@@ -289,11 +297,14 @@ def _get_cl():
         log.debug("OpenCL device: %s", device_name)
         queue = cl.CommandQueue(ctx)
         program = cl.Program(ctx, _CL_SOURCE).build()
+        # Pre-create all kernel objects once so repeated calls reuse the same
+        # instance (avoids RepeatedKernelRetrieval warning and compile cost).
+        kernels = SimpleNamespace(**{name: cl.Kernel(program, name) for name in _KERNEL_NAMES})
         _local.ctx = ctx
         _local.queue = queue
-        _local.program = program
+        _local.kernels = kernels
 
-    return _local.ctx, _local.queue, _local.program
+    return _local.ctx, _local.queue, _local.kernels
 
 
 def _buf(ctx, flags, npix_floats: int = 0, nbytes: int = 0):
@@ -315,7 +326,7 @@ def try_apply_look(
     try:
         import pyopencl as cl
 
-        ctx, queue, prog = _get_cl()
+        ctx, queue, k = _get_cl()
         mf = cl.mem_flags
 
         H, W, _ = arr16.shape
@@ -329,7 +340,7 @@ def try_apply_look(
         # ------------------------------------------------------------------
         # 1. Filmic tone curve.
         # ------------------------------------------------------------------
-        prog.k_filmic(queue, (n,), None,
+        k.k_filmic(queue, (n,), None,
                       rgb_buf, np.int32(n),
                       np.float32(SHADOW_LIFT),
                       np.float32(CONTRAST_STRENGTH),
@@ -346,7 +357,7 @@ def try_apply_look(
 
             # Extract luma.
             luma_buf = _buf(ctx, mf.READ_WRITE, npix)
-            prog.k_luma(queue, (npix,), None, rgb_buf, luma_buf, np.int32(npix))
+            k.k_luma(queue, (npix,), None, rgb_buf, luma_buf, np.int32(npix))
 
             gsize = (W, H)
 
@@ -357,23 +368,23 @@ def try_apply_look(
             buf_b = _buf(ctx, mf.READ_WRITE, npix)
 
             # Fine pass 1: luma_buf → buf_a (H), buf_a → buf_b (V)
-            prog.k_blur_h(queue, gsize, None, luma_buf, buf_a, np.int32(W), np.int32(H), np.int32(fine_r))
-            prog.k_blur_v(queue, gsize, None, buf_a, buf_b, np.int32(W), np.int32(H), np.int32(fine_r))
+            k.k_blur_h(queue, gsize, None, luma_buf, buf_a, np.int32(W), np.int32(H), np.int32(fine_r))
+            k.k_blur_v(queue, gsize, None, buf_a, buf_b, np.int32(W), np.int32(H), np.int32(fine_r))
             # Fine pass 2: buf_b → buf_a (H), buf_a → buf_b (V) → fine_blurred = buf_b
-            prog.k_blur_h(queue, gsize, None, buf_b, buf_a, np.int32(W), np.int32(H), np.int32(fine_r))
-            prog.k_blur_v(queue, gsize, None, buf_a, buf_b, np.int32(W), np.int32(H), np.int32(fine_r))
+            k.k_blur_h(queue, gsize, None, buf_b, buf_a, np.int32(W), np.int32(H), np.int32(fine_r))
+            k.k_blur_v(queue, gsize, None, buf_a, buf_b, np.int32(W), np.int32(H), np.int32(fine_r))
             fine_blurred = buf_b
 
             # Coarse blur: 2 passes from luma_buf; reuse buf_a as temp.
             buf_c = _buf(ctx, mf.READ_WRITE, npix)
 
-            prog.k_blur_h(queue, gsize, None, luma_buf, buf_a, np.int32(W), np.int32(H), np.int32(coarse_r))
-            prog.k_blur_v(queue, gsize, None, buf_a, buf_c, np.int32(W), np.int32(H), np.int32(coarse_r))
-            prog.k_blur_h(queue, gsize, None, buf_c, buf_a, np.int32(W), np.int32(H), np.int32(coarse_r))
-            prog.k_blur_v(queue, gsize, None, buf_a, buf_c, np.int32(W), np.int32(H), np.int32(coarse_r))
+            k.k_blur_h(queue, gsize, None, luma_buf, buf_a, np.int32(W), np.int32(H), np.int32(coarse_r))
+            k.k_blur_v(queue, gsize, None, buf_a, buf_c, np.int32(W), np.int32(H), np.int32(coarse_r))
+            k.k_blur_h(queue, gsize, None, buf_c, buf_a, np.int32(W), np.int32(H), np.int32(coarse_r))
+            k.k_blur_v(queue, gsize, None, buf_a, buf_c, np.int32(W), np.int32(H), np.int32(coarse_r))
             coarse_blurred = buf_c
 
-            prog.k_local_contrast(queue, (npix,), None,
+            k.k_local_contrast(queue, (npix,), None,
                                    rgb_buf, luma_buf, fine_blurred, coarse_blurred,
                                    np.int32(npix),
                                    np.float32(amount),
@@ -383,9 +394,9 @@ def try_apply_look(
         # 3. Vibrance or monochrome.
         # ------------------------------------------------------------------
         if monochrome:
-            prog.k_monochrome(queue, (npix,), None, rgb_buf, np.int32(npix))
+            k.k_monochrome(queue, (npix,), None, rgb_buf, np.int32(npix))
         else:
-            prog.k_vibrance(queue, (npix,), None,
+            k.k_vibrance(queue, (npix,), None,
                             rgb_buf, np.int32(npix),
                             np.float32(SATURATION_BASE * saturation_mult),
                             np.float32(SATURATION_VIBRANCE * saturation_mult),
@@ -398,11 +409,11 @@ def try_apply_look(
         # ------------------------------------------------------------------
         if bits == 16:
             out_buf = _buf(ctx, mf.WRITE_ONLY, nbytes=n * 2)
-            prog.k_quantize_u16(queue, (n,), None, rgb_buf, out_buf, np.int32(n))
+            k.k_quantize_u16(queue, (n,), None, rgb_buf, out_buf, np.int32(n))
             out_host = np.empty(n, dtype=np.uint16)
         else:
             out_buf = _buf(ctx, mf.WRITE_ONLY, nbytes=n)
-            prog.k_quantize_u8(queue, (n,), None, rgb_buf, out_buf, np.int32(n))
+            k.k_quantize_u8(queue, (n,), None, rgb_buf, out_buf, np.int32(n))
             out_host = np.empty(n, dtype=np.uint8)
 
         cl.enqueue_copy(queue, out_host, out_buf)

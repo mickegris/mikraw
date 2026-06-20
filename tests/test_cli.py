@@ -114,3 +114,28 @@ def test_gpu_flag_accepted(tmp_path):
     _touch(tmp_path / "a.RW2")
     rc = main(["--dry-run", "--gpu", "-o", str(tmp_path / "out"), str(tmp_path)])
     assert rc == 0
+
+
+def test_no_gpu_flag_accepted(tmp_path):
+    _touch(tmp_path / "a.RW2")
+    rc = main(["--dry-run", "--no-gpu", "-o", str(tmp_path / "out"), str(tmp_path)])
+    assert rc == 0
+
+
+def test_colorspace_adobergb_accepted(tmp_path):
+    _touch(tmp_path / "a.RW2")
+    rc = main(["--dry-run", "--colorspace", "adobergb", "-o", str(tmp_path / "out"), str(tmp_path)])
+    assert rc == 0
+
+
+def test_dpi_flag_accepted(tmp_path):
+    _touch(tmp_path / "a.RW2")
+    rc = main(["--dry-run", "--dpi", "240", "-o", str(tmp_path / "out"), str(tmp_path)])
+    assert rc == 0
+
+
+def test_srgb_icc_returns_valid_bytes():
+    from mikraw.pipeline import _srgb_icc
+    icc = _srgb_icc()
+    assert isinstance(icc, bytes)
+    assert len(icc) > 100
