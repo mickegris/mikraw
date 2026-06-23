@@ -23,25 +23,34 @@ def available() -> bool:
     return _HAVE_PYEXIV2
 
 
-def copy_metadata(src: str, dst: str) -> bool:
-    """Copy EXIF from RAW ``src`` into JPEG ``dst``. Returns True on success."""
+def copy_metadata(src: str, dst: str, icc: bytes | None = None) -> bool:
+    """Copy EXIF from RAW ``src`` into ``dst``. Returns True on success.
+
+    Pass ``icc`` to re-assert the ICC profile after the EXIF write, ensuring
+    it survives even if libexiv2 rebuilds the file's segment layout.
+    """
     if not _HAVE_PYEXIV2:
         log.debug("pyexiv2 not installed; skipping EXIF copy for %s", dst)
         return False
     try:
         with pyexiv2.Image(src) as s:
-            exif = s.read_exif()
+            exif_data = s.read_exif()
         # Drop the embedded RAW thumbnail/preview pointers -- they no longer
-        # match the JPEG and can confuse viewers.
-        exif = {
+        # match the output and can confuse viewers.
+        exif_data = {
             k: v
-            for k, v in exif.items()
+            for k, v in exif_data.items()
             if not k.startswith("Exif.Thumbnail")
             and "JPEGInterchangeFormat" not in k
         }
-        exif["Exif.Image.Orientation"] = "1"
+        exif_data["Exif.Image.Orientation"] = "1"
         with pyexiv2.Image(dst) as d:
-            d.modify_exif(exif)
+            d.modify_exif(exif_data)
+            if icc is not None:
+                try:
+                    d.modify_icc(icc)
+                except Exception:
+                    pass  # pyexiv2 without ICC support; Pillow's embedding stands
         return True
     except Exception as e:  # best-effort
         log.warning("EXIF copy failed for %s: %s", dst, e)

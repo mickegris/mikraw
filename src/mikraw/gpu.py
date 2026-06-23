@@ -41,6 +41,30 @@ from mikraw.develop import (
 log = logging.getLogger("mikraw")
 
 _local = threading.local()
+# None = untested, True = working, False = known-failed (import or device).
+# Set process-wide so failed workers don't retry on every file.
+_cl_available: bool | None = None
+
+
+def probe() -> bool:
+    """Return True if an OpenCL device is reachable. Result cached per process."""
+    global _cl_available
+    if _cl_available is not None:
+        return _cl_available
+    try:
+        import pyopencl as cl
+        for platform in cl.get_platforms():
+            if platform.get_devices(device_type=cl.device_type.GPU):
+                _cl_available = True
+                return True
+        for platform in cl.get_platforms():
+            if platform.get_devices(device_type=cl.device_type.CPU):
+                _cl_available = True
+                return True
+    except Exception:
+        pass
+    _cl_available = False
+    return False
 
 _CL_SOURCE = r"""
 #define PI_HALF 1.5707963267948966f
@@ -302,6 +326,7 @@ def _get_cl():
         kernels = SimpleNamespace(**{name: cl.Kernel(program, name) for name in _KERNEL_NAMES})
         _local.ctx = ctx
         _local.queue = queue
+        _local.program = program  # keep Python wrapper alive so kernels stay valid
         _local.kernels = kernels
 
     return _local.ctx, _local.queue, _local.kernels
@@ -323,6 +348,9 @@ def try_apply_look(
     bits: int,
 ) -> Optional[np.ndarray]:
     """GPU develop path. Returns a (H,W,3) uint8 or uint16 array, or None on failure."""
+    global _cl_available
+    if _cl_available is False:
+        return None  # known-failed this process; skip without retrying
     try:
         import pyopencl as cl
 
@@ -418,8 +446,11 @@ def try_apply_look(
 
         cl.enqueue_copy(queue, out_host, out_buf)
         queue.finish()
+        _cl_available = True
         return out_host.reshape(H, W, 3)
 
-    except Exception as e:
-        log.debug("OpenCL develop failed (%s); will fall back to CPU", e)
+    except Exception as exc:
+        if _cl_available is None:  # first failure — warn once per process
+            log.warning("GPU develop unavailable (%s); falling back to CPU", type(exc).__name__)
+        _cl_available = False
         return None
