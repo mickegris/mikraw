@@ -99,6 +99,15 @@ def main(argv: list[str] | None = None) -> int:
 
     jobs = args.jobs if args.jobs > 0 else (os.cpu_count() or 1)
 
+    # Probe GPU once in the main process. If unavailable, workers inherit
+    # use_gpu=False and skip the import entirely rather than each failing once.
+    use_gpu = args.gpu
+    if use_gpu:
+        from mikraw.gpu import probe as _gpu_probe
+        if not _gpu_probe():
+            log.debug("OpenCL not available; using CPU for all files")
+            use_gpu = False
+
     # Resolve profile; CLI multipliers override when explicitly provided.
     profile = PROFILES[args.profile]
     opts = Options(
@@ -112,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         clarity=args.clarity if args.clarity is not None else profile.clarity,
         monochrome=profile.monochrome,
         output_format="tiff" if args.tiff else "jpeg",
-        use_gpu=args.gpu,   # True by default; gpu.py falls back to CPU silently
+        use_gpu=use_gpu,
         colorspace=args.colorspace,
         dpi=args.dpi,
         copy_exif=not args.no_exif,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import io
+import importlib.util
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -148,8 +148,6 @@ def convert_one(src: str, opts: Options) -> FileResult:
                 arr16, opts.contrast, opts.saturation, opts.clarity,
                 opts.monochrome, bits,
             )
-            if rgb is None:
-                log.warning("GPU path failed; falling back to CPU")
         if rgb is None:
             rgb = develop.apply_look(
                 arr16, opts.contrast, opts.saturation, opts.clarity,
@@ -179,17 +177,14 @@ def convert_one(src: str, opts: Options) -> FileResult:
             if icc:
                 tiff_kw["iccprofile"] = icc
 
-            try:
+            if importlib.util.find_spec("imagecodecs") is not None:
                 tifffile.imwrite(out_s, rgb, compression="lzw", **tiff_kw)
-            except Exception as lzw_err:
-                if "imagecodecs" in str(lzw_err).lower():
-                    log.warning(
-                        "LZW compression requires the imagecodecs package "
-                        "(pip install imagecodecs); saving uncompressed TIFF"
-                    )
-                    tifffile.imwrite(out_s, rgb, **tiff_kw)
-                else:
-                    raise
+            else:
+                log.warning(
+                    "imagecodecs not installed (pip install imagecodecs); "
+                    "saving uncompressed TIFF"
+                )
+                tifffile.imwrite(out_s, rgb, **tiff_kw)
         else:
             from PIL import Image
 
@@ -208,7 +203,7 @@ def convert_one(src: str, opts: Options) -> FileResult:
         if opts.copy_exif:
             from mikraw import exif
 
-            if not exif.copy_metadata(src, out_s):
+            if not exif.copy_metadata(src, out_s, icc=icc):
                 msg = "exif not copied"
 
         return FileResult(src, out_s, Status.CONVERTED, msg)

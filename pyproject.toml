@@ -22,7 +22,7 @@ dependencies = [
 exif = ["pyexiv2>=2.8"]
 tiff = ["tifffile>=2022.2", "imagecodecs"]
 gpu  = ["pyopencl>=2023.1"]
-dev  = ["pytest>=7.0", "pyexiv2>=2.8", "tifffile>=2022.2"]
+dev  = ["pytest>=7.0", "pyexiv2>=2.8", "tifffile>=2022.2", "imagecodecs"]
 
 [project.scripts]
 mikraw = "mikraw.cli:main"

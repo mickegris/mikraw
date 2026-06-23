@@ -15,9 +15,14 @@ def test_gpu_returns_none_when_pyopencl_missing(monkeypatch):
     monkeypatch.setitem(sys.modules, "pyopencl", None)
     from mikraw import gpu
 
+    # Reset process-level sentinel so tests don't depend on execution order.
+    gpu._cl_available = None
+    gpu._local.__dict__.clear()
+
     arr = (np.random.rand(8, 8, 3) * 65535).astype(np.uint16)
     result = gpu.try_apply_look(arr, 1.0, 1.0, 1.0, False, 8)
     assert result is None
+    assert gpu._cl_available is False
 
 
 def test_gpu_returns_none_on_no_platform(monkeypatch):
@@ -33,14 +38,15 @@ def test_gpu_returns_none_on_no_platform(monkeypatch):
     fake_cl.get_platforms = lambda: []  # no platforms
     fake_cl.mem_flags = types.SimpleNamespace(READ_WRITE=1, WRITE_ONLY=2, COPY_HOST_PTR=4)
     monkeypatch.setitem(sys.modules, "pyopencl", fake_cl)
-    # Invalidate cached context so the next call re-initialises.
-    import threading
+    # Invalidate cached context and sentinel so the next call re-initialises.
     from mikraw import gpu
+    gpu._cl_available = None
     gpu._local.__dict__.clear()
 
     arr = (np.random.rand(8, 8, 3) * 65535).astype(np.uint16)
     result = gpu.try_apply_look(arr, 1.0, 1.0, 1.0, False, 8)
     assert result is None
+    assert gpu._cl_available is False
 
 
 def test_develop_apply_look_cpu_fallback_is_unaffected():
